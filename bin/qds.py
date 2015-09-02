@@ -183,30 +183,31 @@ def checkargs_cluster_id_label(args):
         usage()
 
 
-def cluster_create_action(clusterclass, args):
-    arguments = clusterclass._parse_create_update(args, action="create")
-    cluster_info = _create_cluster_info(arguments)
+def cluster_create_action(clusterclass, args, api_version):
+    arguments = clusterclass._parse_create_update(args, "create", api_version)
+    cluster_info = _create_cluster_info(arguments, api_version)
     result = clusterclass.create(cluster_info.minimal_payload())
     print(json.dumps(result, indent=4))
     return 0
 
 
-def cluster_update_action(clusterclass, args):
-    arguments = clusterclass._parse_create_update(args, action="update")
-    cluster_info = _create_cluster_info(arguments)
+def cluster_update_action(clusterclass, args, api_version):
+    arguments = clusterclass._parse_create_update(args, "update", api_version)
+    cluster_info = _create_cluster_info(arguments, api_version)
     result = clusterclass.update(arguments.cluster_id_label, cluster_info.minimal_payload())
     print(json.dumps(result, indent=4))
     return 0
 
-def cluster_clone_action(clusterclass, args):
-    arguments = clusterclass._parse_create_update(args, action="clone")
-    cluster_info = _create_cluster_info(arguments)
+def cluster_clone_action(clusterclass, args, api_version):
+    arguments = clusterclass._parse_create_update(args, "clone", api_version)
+    cluster_info = _create_cluster_info(arguments, api_version)
     result = clusterclass.clone(arguments.cluster_id_label, cluster_info.minimal_payload())
     print(json.dumps(result, indent=4))
     return 0
 
-def _create_cluster_info(arguments):
+def _create_cluster_info(arguments, api_version):
     cluster_info = ClusterInfo(arguments.label,
+                               api_version,
                                arguments.aws_access_key_id,
                                arguments.aws_secret_access_key,
                                arguments.disallow_cluster_termination,
@@ -227,6 +228,8 @@ def _create_cluster_info(arguments):
                              str(e))
             usage()
 
+    use_qubole_placement_policy = arguments.use_qubole_placement_policy if (api_version >= 1.3) else None
+    fallback_to_ondemand = arguments.fallback_to_ondemand if (api_version >= 1.3) else None
     cluster_info.set_hadoop_settings(arguments.master_instance_type,
                                      arguments.slave_instance_type,
                                      arguments.initial_nodes,
@@ -236,7 +239,9 @@ def _create_cluster_info(arguments):
                                      arguments.use_hbase,
                                      arguments.custom_ec2_tags,
                                      arguments.use_hadoop2,
-                                     arguments.use_spark)
+                                     arguments.use_spark,
+                                     use_qubole_placement_policy,
+							         fallback_to_ondemand)
 
     cluster_info.set_spot_instance_settings(
           arguments.maximum_bid_price_percentage,
@@ -247,6 +252,12 @@ def _create_cluster_info(arguments):
           arguments.stable_maximum_bid_price_percentage,
           arguments.stable_timeout_for_request,
           arguments.stable_allow_fallback)
+
+    if api_version >= 1.3:
+        cluster_info.set_ebs_volume_settings(
+              arguments.ebs_volume_count,
+              arguments.ebs_volume_type,
+              arguments.ebs_volume_size)
 
     fairscheduler_config_xml = None
     if arguments.fairscheduler_config_xml_file is not None:
@@ -376,7 +387,7 @@ def cluster_update_node_action(clusterclass, args):
     print(json.dumps(result, indent=4))
     return 0
 
-def clustermain(args):
+def clustermain(args, api_version):
     clusterclass = Cluster
     actionset = set(["create", "delete", "update", "clone", "list", "start", "terminate", "status", "reassign_label", "add_node", "remove_node", "update_node", "snapshot", "restore_point", "get_snapshot_schedule", "update_snapshot_schedule"])
 
@@ -388,7 +399,10 @@ def clustermain(args):
     if action not in actionset:
         sys.stderr.write("action must be one of <%s>\n" % "|".join(actionset))
         usage()
-    return globals()["cluster_" + action + "_action"](clusterclass, args)
+    elif action in set(["create", "update", "clone"]):
+        return globals()["cluster_" + action + "_action"](clusterclass, args, api_version)
+    else:
+        return globals()["cluster_" + action + "_action"](clusterclass, args)
 
 
 def reportmain(args):
@@ -490,7 +504,8 @@ def main():
         return cmdmain(a0, args)
 
     if a0 == "cluster":
-        return clustermain(args)
+        api_version_number = float(options.api_version[1:])
+        return clustermain(args, api_version_number)
 
     if a0 == "action":
         return actionmain(args)
